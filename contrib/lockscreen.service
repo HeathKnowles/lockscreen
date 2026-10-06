@@ -1,0 +1,40 @@
+# Walk-away screen lock driven by a BLE beacon (lockscreen daemon).
+#
+# This is a *user* unit: it runs unprivileged inside your login session, so the
+# D-Bus system bus (BlueZ) is reachable and `loginctl lock-session` targets your
+# own session.
+#
+# Install:
+#   cargo build --release
+#   install -Dm755 target/release/lockscreen ~/.local/bin/lockscreen
+#   install -Dm644 contrib/lockscreen.service ~/.config/systemd/user/lockscreen.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now lockscreen
+#
+# Logs:   journalctl --user -u lockscreen -f
+# Status: systemctl --user status lockscreen
+# Stop:   systemctl --user disable --now lockscreen
+
+[Unit]
+Description=Lock this machine when the phone's BLE beacon walks away
+# bluetoothd lives on the system bus and may come up after login; Restart= below
+# retries until the adapter is usable, so no ordering dependency is needed.
+# Never give up retrying while the adapter is missing.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Identify the phone by address (works while it is paired/connected) and by
+# advertised name (works while it is advertising but not connected).
+# Run `lockscreen --list` to find the right values for your own phone.
+ExecStart=%h/.local/bin/lockscreen -v \
+    -m addr:7C:F0:E5:B4:48:4A \
+    -m name:OnePlus \
+    -A 15s -W 20s
+
+# A failed start (BT not ready yet, adapter off) is retried after 5s, forever.
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
