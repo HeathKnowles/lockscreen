@@ -1,11 +1,30 @@
 [package]
-name = "lockscreen"
+name = "phoned"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 zbus = "5"
 libc = "0.2"
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+
+[lib]
+name = "phoned"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lockscreen"
+path = "src/bin/lockscreen.rs"
+
+[[bin]]
+name = "phoned"
+path = "src/bin/phoned/main.rs"
 
 [profile.release]
 opt-level = "z"

@@ -1,30 +1,14 @@
-mod config;
-mod device;
-mod list;
-mod log;
-mod scanner;
-mod watch;
-
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use config::{Action, Config, USAGE};
-use device::Dev;
-use log::log;
-
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-
-fn install_handlers() {
-    extern "C" fn handler(_sig: libc::c_int) {
-        SHUTDOWN.store(true, Ordering::SeqCst);
-    }
-    unsafe {
-        libc::signal(libc::SIGINT, handler as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, handler as *const () as libc::sighandler_t);
-    }
-}
+use phoned::config::{self, Action, Config, USAGE};
+use phoned::device::Dev;
+use phoned::install_signal_handlers;
+use phoned::list;
+use phoned::log::log;
+use phoned::scanner;
+use phoned::watch;
 
 fn fail(msg: &str) -> ! {
     eprintln!("error: {msg}");
@@ -32,7 +16,7 @@ fn fail(msg: &str) -> ! {
 }
 
 fn run(cfg: Config, list: bool) {
-    install_handlers();
+    install_signal_handlers();
 
     let conn = match zbus::blocking::Connection::system() {
         Ok(c) => Arc::new(c),

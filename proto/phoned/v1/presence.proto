@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package phoned.v1;
+
+// Presence service: phone telemetry (phone -> desktop) and the desktop-side
+// link status that drives the walk-away lock. WatchState mirrors the
+// lockscreen watcher's state machine (waiting / watching / locked).
+service Presence {
+  // Stream battery/screen telemetry pushed by the phone.
+  rpc WatchPhone(WatchRequest) returns (stream PhoneStatus);
+
+  // Stream desktop link/presence status for the paired phone.
+  rpc WatchLink(WatchRequest) returns (stream LinkStatus);
+
+  // One-shot snapshot for a UI that just connected.
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+// No filters yet; later releases may add service uuid / rssi window fields.
+message WatchRequest {}
+
+message PhoneStatus {
+  int32 battery_percent = 1;
+  bool charging = 2;
+  bool screen_on = 3;
+  // Phone clock, informational only.
+  int64 updated_unix_ms = 4;
+}
+
+message LinkStatus {
+  // Bluetooth display name of the phone, empty if unknown.
+  string device_label = 1;
+  // MAC address, e.g. "7C:F0:E5:B4:48:4A".
+  string address = 2;
+  bool connected = 3;
+  // BR/EDR links report no RSSI on this hardware: trust rssi_dbm only when
+  // has_rssi is true (see DECISIONS.md).
+  bool has_rssi = 4;
+  int32 rssi_dbm = 5;
+  WatchState state = 6;
+  // Desktop clock.
+  int64 last_seen_unix_ms = 7;
+}
+
+enum WatchState {
+  WATCH_STATE_UNSPECIFIED = 0;
+  // Phone not seen yet / watcher not armed.
+  WATCH_STATE_WAITING = 1;
+  // Armed and the phone is near (or link is up).
+  WATCH_STATE_WATCHING = 2;
+  // Walk-away lock has fired.
+  WATCH_STATE_LOCKED = 3;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  LinkStatus link = 1;
+  // Absent until the phone has reported telemetry.
+  PhoneStatus phone = 2;
+  string server_version = 3;
+}

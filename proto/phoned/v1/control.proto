@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package phoned.v1;
+
+// Control service: pairing, session authentication and device-level actions.
+// One file per feature (PLAN.md §5). Breaking changes get a new package (v2),
+// never a re-tagged field: add fields freely, never renumber or repurpose.
+service Control {
+  // Liveness and server identity. Unauthenticated.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Pairing handshake: proves knowledge of the one-time code shown on the
+  // desktop. Returns the stable device_id the phone uses from then on.
+  rpc Pair(PairRequest) returns (PairResponse);
+
+  // Challenge-response authentication: fetch a short-lived nonce, then present
+  // a signature over it with the key established during pairing.
+  rpc AuthChallenge(AuthChallengeRequest) returns (AuthChallengeResponse);
+  rpc Auth(AuthRequest) returns (AuthResponse);
+
+  // Which services this peer may call, plus its permission tier.
+  rpc Capabilities(CapabilitiesRequest) returns (CapabilitiesResponse);
+
+  // Lock the screen now; reason lands in the journal.
+  rpc Lock(LockRequest) returns (LockResponse);
+
+  // Deliberately not implemented: the daemon never unlocks the session.
+  // The response carries an explanatory detail instead of an error body.
+  rpc Unlock(UnlockRequest) returns (UnlockResponse);
+
+  // Revoke this device's own credentials (panic button on the phone).
+  rpc Revoke(RevokeRequest) returns (RevokeResponse);
+}
+
+message PingRequest {
+  string client_name = 1;
+}
+
+message PingResponse {
+  uint64 server_time_unix_ms = 1;
+  string server_version = 2;
+}
+
+message PairRequest {
+  // One-time pairing code as displayed by `phoned pair` on the desktop.
+  string code = 1;
+  // Stable identifier chosen by the phone (e.g. Android settings secure id).
+  string device_id = 2;
+  // Human-readable name for the desktop's paired-device list.
+  string device_name = 3;
+}
+
+message PairResponse {
+  string device_id = 1;
+  DeviceTier tier = 2;
+}
+
+message AuthChallengeRequest {
+  string device_id = 1;
+}
+
+message AuthChallengeResponse {
+  bytes nonce = 1;
+  uint64 expires_unix_ms = 2;
+}
+
+message AuthRequest {
+  string device_id = 1;
+  // Nonce previously issued by AuthChallenge.
+  bytes nonce = 2;
+  // Signature over the nonce with the device's pairing key.
+  bytes signature = 3;
+}
+
+message AuthResponse {
+  // Bearer token for the session interceptor; store it in the phone keystore.
+  string session_token = 1;
+  uint64 expires_unix_ms = 2;
+  DeviceTier tier = 3;
+}
+
+message CapabilitiesRequest {}
+
+message CapabilitiesResponse {
+  // Fully-qualified RPC names this session may call, e.g.
+  // "phoned.v1.Control.Lock". Anything absent is rejected by the interceptor.
+  repeated string services = 1;
+  DeviceTier tier = 2;
+  // Daemon feature flags, informational only (e.g. "fallback", "shell").
+  repeated string features = 3;
+}
+
+enum DeviceTier {
+  DEVICE_TIER_UNSPECIFIED = 0;
+  // Telemetry and notification sink only.
+  DEVICE_TIER_OBSERVER = 1;
+  // Observer + Lock, media, clipboard, notification actions.
+  DEVICE_TIER_CONTROLLER = 2;
+  // Controller + power, allowlisted commands, opt-in shell, pairing admin.
+  DEVICE_TIER_ADMIN = 3;
+}
+
+message LockRequest {
+  string reason = 1;
+}
+
+message LockResponse {}
+
+message UnlockRequest {
+  string reason = 1;
+}
+
+message UnlockResponse {
+  // Human-readable explanation, e.g. "not supported: session stays locked".
+  string detail = 1;
+}
+
+message RevokeRequest {
+  string device_id = 1;
+}
+
+message RevokeResponse {}
