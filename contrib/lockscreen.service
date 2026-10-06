@@ -27,10 +27,17 @@ Type=simple
 # Identify the phone by address (works while it is paired/connected) and by
 # advertised name (works while it is advertising but not connected).
 # Run `lockscreen --list` to find the right values for your own phone.
+#
+# -D 0s   the moment the phone's connection drops (out of range / Bluetooth off)
+#         -> lock immediately. No grace period.
+# -A 15s  advertisements only: 15s of total silence -> lock. Needed because a
+#         phone that does not advertise must fall back to the connection.
+# -W 20s  RSSI below -75 dBm for 20s -> lock (only reachable once the phone
+#         advertises something we can measure).
 ExecStart=%h/.local/bin/lockscreen -v \
     -m addr:7C:F0:E5:B4:48:4A \
     -m name:OnePlus \
-    -A 15s -W 20s
+    -D 0s -A 15s -W 20s
 
 # A failed start (BT not ready yet, adapter off) is retried after 5s, forever.
 Restart=on-failure

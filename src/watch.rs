@@ -35,10 +35,14 @@ pub fn apply_event(devices: &mut HashMap<String, Dev>, ev: Event, cfg: &Config) 
                     let held = held
                         .map(|d| format!(" (was connected {})", fmt_dur(d)))
                         .unwrap_or_default();
+                    let due = if cfg.drop_timeout.is_zero() {
+                        "locks immediately".to_string()
+                    } else {
+                        format!("locks in {:?}", cfg.drop_timeout)
+                    };
                     log(&format!(
-                        "phone disconnected: {}{held} - locks in {}s unless seen again",
-                        dev.label(),
-                        cfg.away_timeout.as_secs()
+                        "phone disconnected: {}{held} - {due} unless a fresh advertisement appears",
+                        dev.label()
                     ));
                 }
             }
@@ -104,6 +108,8 @@ struct Snapshot {
     connected_for: Option<Duration>,
     /// Newest advertisement evidence from a matched device.
     last_adv: Option<Instant>,
+    /// True while `last_adv` is inside the away window.
+    adv_fresh: bool,
 }
 
 fn snapshot(devices: &HashMap<String, Dev>, cfg: &Config, now: Instant) -> Snapshot {
@@ -155,6 +161,7 @@ fn snapshot(devices: &HashMap<String, Dev>, cfg: &Config, now: Instant) -> Snaps
         matched_seen,
         connected_for,
         last_adv,
+        adv_fresh: last_adv.is_some_and(|t| now.saturating_duration_since(t) < cfg.away_timeout),
     }
 }
 
@@ -163,6 +170,8 @@ struct Watch {
     locked: bool,
     weak_since: Option<Instant>,
     rearm_since: Option<Instant>,
+    drop_since: Option<Instant>,
+    prev_connected: bool,
     next_lock_attempt: Option<Instant>,
     started: Instant,
     warned: bool,
@@ -178,6 +187,8 @@ impl Watch {
             locked: false,
             weak_since: None,
             rearm_since: None,
+            drop_since: None,
+            prev_connected: false,
             next_lock_attempt: None,
             started: now,
             warned: false,
@@ -229,7 +240,11 @@ fn status_line(cfg: &Config, w: &Watch, snap: &Snapshot) -> String {
     // connection keeps `last_present` fresh by design, so advertise that honestly
     // instead of showing a countdown that never ticks.
     let away = if snap.connected_for.is_some() {
-        format!("locks {}s after disconnect", cfg.away_timeout.as_secs())
+        if cfg.drop_timeout.is_zero() {
+            "locks instantly if link drops".to_string()
+        } else {
+            format!("locks {:?} after link drops", cfg.drop_timeout)
+        }
     } else if let Some(t) = snap.last_present {
         format!(
             "away in {:.0}s",
@@ -271,6 +286,7 @@ fn lock_now(w: &mut Watch, cfg: &Config, reason: &str) {
             w.locked = true;
             w.rearm_since = None;
             w.weak_since = None;
+            w.drop_since = None;
             log(if cfg.dry_run {
                 "state: would be locked (dry-run)"
             } else {
@@ -309,6 +325,26 @@ pub fn monitor(cfg: &Config, devices: &mut HashMap<String, Dev>, rx: mpsc::Recei
         let now = Instant::now();
         let snap = snapshot(devices, cfg, now);
 
+        // "Out of scope" for a paired phone means the link is gone. Advertisements are
+        // the weaker signal: while one is fresh we are in range even if profiles flap.
+        let connected_now = snap.connected_for.is_some();
+        let adv_now = snap.adv_fresh;
+        if w.prev_connected && !connected_now && !adv_now && w.drop_since.is_none() {
+            w.drop_since = Some(now);
+            let due = if cfg.drop_timeout.is_zero() {
+                "now".to_string()
+            } else {
+                format!("in {:?}", cfg.drop_timeout)
+            };
+            log(&format!(
+                "phone out of scope: connection dropped - locking {due}"
+            ));
+        }
+        if connected_now || adv_now {
+            w.drop_since = None;
+        }
+        w.prev_connected = connected_now;
+
         if !w.armed && snap.matched_seen {
             w.armed = true;
             log(&format!(
@@ -318,11 +354,18 @@ pub fn monitor(cfg: &Config, devices: &mut HashMap<String, Dev>, rx: mpsc::Recei
         }
 
         if w.armed && !w.locked {
+            if let Some(t) = w.drop_since
+                && now.saturating_duration_since(t) >= cfg.drop_timeout
+            {
+                lock_now(&mut w, cfg, "out of scope: phone connection lost");
+                continue;
+            }
+
             let gone_for = match snap.last_present {
                 Some(t) => now.saturating_duration_since(t),
                 None => w.started.elapsed(),
             };
-            if gone_for >= cfg.away_timeout {
+            if snap.connected_for.is_none() && gone_for >= cfg.away_timeout {
                 lock_now(
                     &mut w,
                     cfg,
@@ -355,10 +398,10 @@ pub fn monitor(cfg: &Config, devices: &mut HashMap<String, Dev>, rx: mpsc::Recei
                 w.weak_since = None;
             }
         } else if w.locked {
-            let near = snap.matched_seen
-                && snap
-                    .last_present
-                    .is_some_and(|t| now.saturating_duration_since(t) < cfg.away_timeout)
+            // Re-arm on live evidence only. `last_present` is not usable here: it holds
+            // the disconnect grace timestamp, which would re-arm seconds after the phone
+            // was already gone.
+            let near = (connected_now || adv_now)
                 && match snap.best_rssi {
                     Some(r) => r >= f64::from(cfg.rssi_threshold + cfg.hysteresis),
                     None => true,
@@ -371,6 +414,7 @@ pub fn monitor(cfg: &Config, devices: &mut HashMap<String, Dev>, rx: mpsc::Recei
                     w.locked = false;
                     w.rearm_since = None;
                     w.weak_since = None;
+                    w.drop_since = None;
                     w.next_lock_attempt = None;
                     log("re-armed: phone is near again");
                 }

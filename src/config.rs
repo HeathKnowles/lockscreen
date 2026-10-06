@@ -18,6 +18,8 @@ OPTIONS:
   -a, --adapter <hciN>      BlueZ adapter (default: auto-detect)
   -r, --rssi <dBm>          'too weak' threshold (default: -75)
   -A, --away-timeout <dur>  no advertisement at all -> lock (default: 12s)
+  -D, --drop-timeout <dur>  the phone's connection drops (out of range) -> lock
+                             after this (default: 0s = immediately)
   -W, --weak-timeout <dur>  below RSSI threshold for this long -> lock (default: 15s)
   -H, --hysteresis <dB>     re-arm margin above threshold (default: 6)
   -c, --lock-cmd <CMD>      shell command used to lock (default: loginctl lock-session)
@@ -43,6 +45,7 @@ pub struct Config {
     pub matchers: Vec<Matcher>,
     pub rssi_threshold: i16,
     pub away_timeout: Duration,
+    pub drop_timeout: Duration,
     pub weak_timeout: Duration,
     pub hysteresis: i16,
     pub lock_cmd: String,
@@ -115,6 +118,7 @@ pub fn parse_args(args: &[String]) -> Result<Action, String> {
         matchers: Vec::new(),
         rssi_threshold: -75,
         away_timeout: Duration::from_secs(12),
+        drop_timeout: Duration::ZERO,
         weak_timeout: Duration::from_secs(15),
         hysteresis: 6,
         lock_cmd: default_lock_cmd(),
@@ -155,6 +159,9 @@ pub fn parse_args(args: &[String]) -> Result<Action, String> {
             "-A" | "--away-timeout" => {
                 cfg.away_timeout = parse_duration(&take("--away-timeout")?)?;
             }
+            "-D" | "--drop-timeout" => {
+                cfg.drop_timeout = parse_duration(&take("--drop-timeout")?)?;
+            }
             "-W" | "--weak-timeout" => {
                 cfg.weak_timeout = parse_duration(&take("--weak-timeout")?)?;
             }
@@ -174,6 +181,14 @@ pub fn parse_args(args: &[String]) -> Result<Action, String> {
 
     if !list && cfg.matchers.is_empty() {
         return Err("at least one --match is required (or use --list)".to_string());
+    }
+    if !list && cfg.away_timeout.is_zero() {
+        return Err(
+            "--away-timeout must be at least 1s (advertisements are lossy; a zero \
+             tolerance would lock at your own desk). Use --drop-timeout 0s to lock the \
+             instant the phone's connection drops."
+                .to_string(),
+        );
     }
     Ok(Action::Run { cfg, list })
 }

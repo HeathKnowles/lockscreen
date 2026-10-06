@@ -78,11 +78,42 @@ fn line(dev: &Dev) -> String {
 
 fn extra(dev: &Dev) -> String {
     let mut parts: Vec<String> = Vec::new();
-    if let Some(u) = dev.uuids.first() {
-        parts.push(format!("svc {u}"));
+    if !dev.uuids.is_empty() {
+        parts.push(list_field(
+            "svc",
+            &dev.uuids.iter().map(short_uuid).collect::<Vec<_>>(),
+        ));
     }
-    if let Some((id, _)) = dev.manufacturer.first() {
-        parts.push(format!("mfr 0x{id:04x}"));
+    if !dev.service_data.is_empty() {
+        parts.push(list_field(
+            "sd",
+            &dev.service_data.iter().map(short_uuid).collect::<Vec<_>>(),
+        ));
+    }
+    if !dev.manufacturer.is_empty() {
+        let shown: Vec<String> = dev
+            .manufacturer
+            .iter()
+            .take(2)
+            .map(|(id, data)| {
+                let hex: String = data.iter().take(10).map(|b| format!("{b:02x}")).collect();
+                if data.is_empty() {
+                    format!("0x{id:04x}")
+                } else {
+                    format!("0x{id:04x}[{hex}]")
+                }
+            })
+            .collect();
+        let more = dev.manufacturer.len().saturating_sub(shown.len());
+        let joined = shown.join(",");
+        parts.push(format!(
+            "mfr {}",
+            if more > 0 {
+                format!("{joined} +{more}")
+            } else {
+                joined
+            }
+        ));
     }
     if dev.connected {
         parts.push("connected".to_string());
@@ -91,5 +122,27 @@ fn extra(dev: &Dev) -> String {
         String::new()
     } else {
         format!("  [{}]", parts.join(", "))
+    }
+}
+
+fn list_field(kind: &str, items: &[String]) -> String {
+    let shown = &items[..items.len().min(3)];
+    let more = items.len() - shown.len();
+    let joined = shown.join(",");
+    if more > 0 {
+        format!("{kind} {joined} +{more}")
+    } else {
+        format!("{kind} {joined}")
+    }
+}
+
+/// Print Bluetooth SIG UUIDs in short form (`180d`, `fd6f`).
+fn short_uuid(u: impl AsRef<str>) -> String {
+    let u = u.as_ref();
+    let bare: String = u.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if bare.len() == 32 && bare.starts_with("0000") && bare.ends_with("00001000800000805f9b34fb") {
+        bare[4..8].to_string()
+    } else {
+        u.to_string()
     }
 }
